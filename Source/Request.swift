@@ -38,17 +38,25 @@ public class Request {
     /// - cancelled: Set when `cancel()` is called. Any tasks created for the `Request` will have `cancel()` called on
     ///              them. Unlike `resumed` or `suspended`, once in the `cancelled` state, the `Request` can no longer
     ///              transition to any other state.
+    /// - finished:  TODO: CN
     public enum State {
-        case initialized, resumed, suspended, cancelled
+        case initialized, resumed, suspended, cancelled, finished
 
         /// Determines whether `self` can be transitioned to `state`.
         func canTransitionTo(_ state: State) -> Bool {
             switch (self, state) {
-            case (.initialized, _): return true
-            case (_, .initialized), (.cancelled, _): return false
-            case (.resumed, .cancelled), (.suspended, .cancelled),
-                 (.resumed, .suspended), (.suspended, .resumed): return true
-            case (.suspended, .suspended), (.resumed, .resumed): return false
+            case (.initialized, _):
+                return true
+            case (_, .initialized), (.cancelled, _):
+                return false
+            case (.resumed, .cancelled), (.suspended, .cancelled), (.resumed, .suspended), (.suspended, .resumed):
+                return true
+            case (.suspended, .suspended), (.resumed, .resumed):
+                return false
+            case (_, .finished):
+                return true
+            case (.finished, _):
+                return false
             }
         }
     }
@@ -109,14 +117,17 @@ public class Request {
         get { return protectedMutableState.directValue.state }
         set { protectedMutableState.write { $0.state = newValue } }
     }
-    /// Returns whether `state` is `.cancelled`.
-    public var isCancelled: Bool { return state == .cancelled }
+
+    /// Returns whether `state` is `.initialized`.
+    public var isInitialized: Bool { return state == .initialized }
     /// Returns whether `state is `.resumed`.
     public var isResumed: Bool { return state == .resumed }
     /// Returns whether `state` is `.suspended`.
     public var isSuspended: Bool { return state == .suspended }
-    /// Returns whether `state` is `.initialized`.
-    public var isInitialized: Bool { return state == .initialized }
+    /// Returns whether `state` is `.cancelled`.
+    public var isCancelled: Bool { return state == .cancelled }
+    /// Returns whether `state` is `.finished`.
+    public var isFinished: Bool { return state == .finished }
 
     // Progress
 
@@ -390,7 +401,14 @@ public class Request {
 
     /// Appends the response serialization closure to the `Request`.
     func appendResponseSerializer(_ closure: @escaping () -> Void) {
-        protectedMutableState.write { $0.responseSerializers.append(closure) }
+        protectedMutableState.write { mutableState in
+            mutableState.responseSerializers.append(closure)
+
+            if mutableState.state == .finished {
+                mutableState.error = AFError.responseSerializationFailed(reason: .responseSerializerAddedAfterRequestFinished)
+                underlyingQueue.async { self.processNextResponseSerializer() }
+            }
+        }
     }
 
     /// Returns the next response serializer closure to execute if there's one left.
@@ -423,6 +441,8 @@ public class Request {
                 // An example of how this can happen is by calling cancel inside a response completion closure.
                 mutableState.responseSerializers.removeAll()
                 mutableState.responseSerializerCompletions.removeAll()
+
+                mutableState.state = .finished
             }
 
             completions.forEach { $0() }

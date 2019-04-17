@@ -473,7 +473,7 @@ open class Session {
         case (true, .initialized):
             request.resume()
         case (false, .initialized):
-            // Do nothing.
+            // Do nothing
             break
         case (_, .resumed):
             task.resume()
@@ -484,6 +484,9 @@ open class Session {
         case (_, .cancelled):
             task.cancel()
             request.didCancelTask(task)
+        case (_, .finished):
+            // Do nothing
+            break
         }
     }
 
